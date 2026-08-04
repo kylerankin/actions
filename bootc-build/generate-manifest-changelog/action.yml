@@ -1,0 +1,88 @@
+name: "bootc-build/generate-manifest-changelog"
+description: "Generate an OCI manifest changelog by comparing container image manifests via skopeo."
+author: "projectbluefin"
+
+inputs:
+  target:
+    description: "Tag to generate changelog for (e.g. stable, lts)"
+    required: true
+  registry:
+    description: "OCI registry base URL"
+    default: "ghcr.io/projectbluefin"
+  config:
+    description: "Path to changelog_config.yaml. Defaults to the action's bundled config."
+    default: "${{ github.action_path }}/changelog_config.yaml"
+  previous-tag:
+    description: "Override the previous tag (auto-detected if omitted)"
+  github-token:
+    description: "GitHub token for API access"
+    required: true
+  handwritten:
+    description: "Path to handwritten notes file to prepend"
+
+outputs:
+  changelog-path:
+    description: "Path to generated changelog.md"
+    value: ${{ steps.generate.outputs.changelog-path }}
+  changelog-tag:
+    description: "The resolved current tag"
+    value: ${{ steps.generate.outputs.changelog-tag }}
+  skip-changelog:
+    description: "'true' if release already exists and --force was not set"
+    value: ${{ steps.generate.outputs.skip-changelog }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Python dependencies
+      shell: bash
+      run: pip install pyyaml
+
+    - name: Generate changelog
+      id: generate
+      env:
+        TARGET: ${{ inputs.target }}
+        REGISTRY: ${{ inputs.registry }}
+        PREVIOUS_TAG: ${{ inputs.previous-tag }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        CHANGELOG_PATH: changelog.md
+        OUTPUT_PATH: output.env
+        GITHUB_OUTPUT_FILE: ${{ github.output }}
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Build the command
+        CMD=(python3 "${{ github.action_path }}/changelogs.py")
+        CMD+=(--config "${{ inputs.config }}")
+        CMD+=(--output-file "$CHANGELOG_PATH")
+        CMD+=(--env-output-file "$OUTPUT_PATH")
+        CMD+=(--check-release)
+        CMD+=(--force)
+
+        if [ -n "${PREVIOUS_TAG:-}" ]; then
+          CMD+=(--previous-tag "$PREVIOUS_TAG")
+        fi
+
+        if [ -n "${{ inputs.handwritten }}" ]; then
+          CMD+=(--handwritten "${{ inputs.handwritten }}")
+        fi
+
+        CMD+=(--github-output "$GITHUB_OUTPUT")
+        CMD+=("$TARGET")
+
+        echo "Running: ${CMD[*]}"
+        "${CMD[@]}"
+
+        # Read outputs from GITHUB_OUTPUT file
+        SKIP="false"
+        TAG=""
+        if [ -f "$GITHUB_OUTPUT" ]; then
+          SKIP=$(grep '^SKIP_CHANGELOG=' "$GITHUB_OUTPUT" | cut -d= -f2 || echo "false")
+          TAG=$(grep '^CHANGELOG_TAG=' "$GITHUB_OUTPUT" | cut -d= -f2 || echo "")
+        fi
+
+        # Write action outputs
+        echo "changelog-path=$CHANGELOG_PATH" >> "$GITHUB_OUTPUT"
+        echo "changelog-tag=$TAG" >> "$GITHUB_OUTPUT"
+        echo "skip-changelog=$SKIP" >> "$GITHUB_OUTPUT"

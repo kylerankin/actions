@@ -358,6 +358,28 @@ jobs:
           SPDXEOF
           echo "WARNING: Using placeholder SBOM — artifact '${{ inputs.sbom_artifact }}' missing from run ${{ steps.build_run.outputs.run_id }}"
 
+      - name: Generate OCI manifest changelog
+        id: manifest-changelog
+        uses: projectbluefin/actions/bootc-build/generate-manifest-changelog@39a69224d216338402fd83d8d0702d7ef3fefba3 # v1
+        with:
+          target: ${{ inputs.stream_name }}
+          registry: ${{ inputs.image | regex_replace('^ghcr.io/', '') }}
+          github-token: ${{ github.token }}
+
+      - name: Append manifest changelog to release body
+        if: steps.manifest-changelog.outputs.skip-changelog == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          CHANGELOG_PATH: changelog.md
+        run: |
+          set -euo pipefail
+          if [[ -f "${CHANGELOG_PATH}" ]]; then
+            CURRENT=$(gh release view "${TAG}" --repo "${{ github.repository }}" --json body --jq '.body')
+            printf '%s\n%s' "$(cat "${CHANGELOG_PATH}")" "$CURRENT" > /tmp/updated-body.md
+            gh release edit "${TAG}" --repo "${{ github.repository }}" --notes-file /tmp/updated-body.md
+          fi
+
       - name: Create release
         uses: projectbluefin/actions/bootc-build/create-release@39a69224d216338402fd83d8d0702d7ef3fefba3 # v1
         with:
