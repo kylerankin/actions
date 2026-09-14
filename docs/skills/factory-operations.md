@@ -146,7 +146,8 @@ falls below the success-rate threshold.
 
 ### Alerting behavior
 
-- Success rate = `successful completed runs / completed non-skipped runs`
+- Success rate = `successful completed runs / completed non-skipped, non-cancelled runs`
+  (cancelled runs were preempted by a higher-priority request, not a build failure; see factory-health issue #493)
 - Window = last 24 hours
 - Threshold = 80%
 - Open issues are deduplicated by repo + pipeline title prefix

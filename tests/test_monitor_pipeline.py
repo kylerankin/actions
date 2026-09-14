@@ -152,17 +152,30 @@ class TestComputePipelineHealth:
         result = compute_pipeline_health(runs, CUTOFF_1D_AGO)
         assert result["status"] == "no-runs"
 
+    def test_cancelled_runs_excluded_from_total(self):
+        # A cancelled build was preempted by a higher-priority request (not a
+        # failure), so it must not drag down the success rate — see #493.
+        success = _make_run("success", minutes_ago=30)
+        cancelled = _make_run("cancelled", minutes_ago=30)
+        result = compute_pipeline_health([success, cancelled], CUTOFF_1H_AGO)
+        assert result["total"] == 1  # cancelled doesn't count
+        assert result["success"] == 1
+        assert result["rate_value"] == 100
+        assert result["status"] == "healthy"
+        assert result["failures_md"] == ""  # cancelled is not a failing run
+
     def test_mixed_conclusions_rate_calculation(self):
-        # 6 success, 2 failure, 2 cancelled = 10 total, 60% success
+        # 6 success, 2 failure, 2 cancelled = 8 counted (cancelled excluded),
+        # 75% success -> alert. See factory-health issue #493.
         runs = (
             [_make_run("success", minutes_ago=30) for _ in range(6)]
             + [_make_run("failure", minutes_ago=30) for _ in range(2)]
             + [_make_run("cancelled", minutes_ago=30) for _ in range(2)]
         )
         result = compute_pipeline_health(runs, CUTOFF_1H_AGO, threshold=80)
-        assert result["total"] == 10
+        assert result["total"] == 8
         assert result["success"] == 6
-        assert result["rate_value"] == 60
+        assert result["rate_value"] == 75
         assert result["status"] == "alert"
 
 

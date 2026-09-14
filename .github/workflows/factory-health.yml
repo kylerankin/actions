@@ -71,7 +71,7 @@ jobs:
 
             completed_json=$(jq '
               [ .[]
-              | select(.status == "completed" and .conclusion != "skipped")
+              | select(.status == "completed" and .conclusion != "skipped" and .conclusion != "cancelled")
               ]
             ' <<<"${recent_json}")
 

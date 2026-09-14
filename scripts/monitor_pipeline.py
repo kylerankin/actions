@@ -67,10 +67,14 @@ def compute_pipeline_health(
         if _parse_epoch(r.get("createdAt", "")) >= cutoff_epoch
     ]
 
-    # Only completed, non-skipped runs count
+    # Only completed runs with a real pass/fail outcome count. Skipped and
+    # cancelled runs are inconclusive: a cancelled build was preempted by a
+    # higher-priority request (see factory-health issue #493), not a failure,
+    # so both are excluded from the success-rate denominator.
     completed = [
         r for r in recent
-        if r.get("status") == "completed" and r.get("conclusion") != "skipped"
+        if r.get("status") == "completed"
+        and r.get("conclusion") not in {"skipped", "cancelled"}
     ]
 
     total = len(completed)
