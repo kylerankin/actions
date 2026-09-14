@@ -35,9 +35,21 @@ note "allow_auto_merge = $allow_auto_merge"
 #    fails at the last step. The repo uses branch rulesets, so read bypass
 #    actors from the active branch ruleset rather than the legacy protection API.
 note "== main branch-protection bypass actors =="
-main_ruleset=$(gh api "repos/$REPO_REF/rulesets" --jq '
-  ([.[] | select(.target == "branch")
-      | select((.conditions.ref_name.include // []) | index("refs/heads/main"))][0]) // null')
+ruleset_resp=$(gh api "repos/$REPO_REF/rulesets" 2>/dev/null || echo "null")
+main_ruleset="null"
+
+if jq -e 'type == "object" and .target == "branch"' <<<"$ruleset_resp" >/dev/null 2>&1; then
+  main_ruleset="$ruleset_resp"
+elif jq -e 'type == "array"' <<<"$ruleset_resp" >/dev/null 2>&1; then
+  for rs_id in $(jq -r '.[] | select(.target == "branch" and .enforcement == "active") | .id' <<<"$ruleset_resp"); do
+    detailed=$(gh api "repos/$REPO_REF/rulesets/$rs_id" 2>/dev/null || true)
+    if [ -n "$detailed" ] && jq -e '((.conditions.ref_name.include // []) | index("refs/heads/main")) or ((.conditions.ref_name.include // []) | index("main"))' <<<"$detailed" >/dev/null 2>&1; then
+      main_ruleset="$detailed"
+      break
+    fi
+  done
+fi
+
 if [ -z "$main_ruleset" ] || [ "$main_ruleset" = "null" ]; then
   fail_assert "no branch ruleset enforces main"
   bypass='[]'
@@ -46,9 +58,9 @@ else
 fi
 note "bypass_actors = $bypass"
 n_mergeraptor=$(echo "$bypass" \
-  | jq '[.[] | select(.actor_type == "app" and (.actor_name | ascii_downcase) == "mergeraptor")] | length')
+  | jq '[.[] | select((.actor_type == "app" or .actor_type == "Integration") and (((.actor_name // "") | ascii_downcase) == "mergeraptor" or .actor_id == 3069633))] | length')
 n_other=$(echo "$bypass" \
-  | jq '[.[] | select((.actor_name | ascii_downcase) != "mergeraptor")] | length')
+  | jq '[.[] | select(.actor_type != "OrganizationAdmin") | select((.actor_type != "app" and .actor_type != "Integration") or ((((.actor_name // "") | ascii_downcase) != "mergeraptor") and .actor_id != 3069633))] | length')
 [ "$n_mergeraptor" -eq 1 ] || \
   fail_assert "mergeraptor app is not exactly one bypass actor on main"
 [ "$n_other" -eq 0 ] || \
@@ -77,10 +89,10 @@ gh api graphql \
     | map(
         . as $n
         | ($n.author.login | ascii_downcase | sub("^app/"; "") | sub("\\[bot\\]$"; "")) as $login
-        | select($login == "mergeraptor" or $login == "renovate")
+        | select(($login == "mergeraptor" or $login == "renovate") and $n.autoMergeRequest != null)
         | "  #\($n.number) \($n.author.login) autoMerge=\($n.autoMergeRequest.enabledAt // "null")"
       )
-    | (if length == 0 then "  (none)" else . end)
+    | (if length == 0 then ["  (none)"] else . end)
     | .[]'
 
 if [ "$fail" -ne 0 ]; then
