@@ -33,7 +33,7 @@ patterns, github-token pattern), see the parent [`composite-actions.md`](../comp
 
 Sets up a GitHub Actions runner for bootc image building. Two storage backends:
 
-- `btrfs` (default): mounts a BTRFS volume at `/var/lib/containers` via `ublue-os/container-storage-action`
+- `btrfs` (default): mounts a BTRFS volume at `/var/lib/containers`. The loopback is created **inline** in the action — on `/mnt` when the runner still exposes it, otherwise on the root filesystem freed by the remove-software step. This survives newer runner images that dropped the `/mnt` mount (otherwise the build ran on the small root fs and failed with `tar exit 2`, projectbluefin/bluefin#1120).
 - `remove-software`: frees disk by nuking Android/Haskell/dotnet toolchains
 
 Upgrades podman from Ubuntu **resolute** (25.04) because older Ubuntu 24.04 runner images ship a version too old to support layer annotations (`ostree.components`) and `zstd:chunked` push.

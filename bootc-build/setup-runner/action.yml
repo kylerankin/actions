@@ -46,11 +46,37 @@ runs:
 
     - name: Mount BTRFS for podman storage
       if: inputs.storage-backend == 'btrfs'
-      uses: ublue-os/container-storage-action@dc1f4c8f17b672069e921f001132f7cf98a423a6 # no-release, Merge PR #18 (2026-02)
-      with:
-        target-dir: /var/lib/containers
-        mount-opts: compress-force=zstd:2
-        loopback-free: "1"
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Newer GitHub runner images no longer expose /mnt as a dedicated
+        # mountpoint, so ublue-os/container-storage-action's "skip when /mnt
+        # is absent" path left podman building on the (small) root filesystem
+        # and the image build failed with "tar exit 2" (disk exhaustion,
+        # projectbluefin/bluefin#1120). Place the btrfs loopback on /mnt when
+        # the runner still provides it, otherwise on the root filesystem,
+        # which the remove-software step above has already freed.
+        sudo apt-get install -y btrfs-progs
+        target_dir=/var/lib/containers
+        if sudo mountpoint /mnt >/dev/null 2>&1; then
+          backing=/mnt/btrfs_loopbacks
+        else
+          backing=/var/lib
+        fi
+        sudo mkdir -p "$backing"
+        loopback_file="$backing/podman-btrfs.btrfs"
+        avail_bytes=$(sudo findmnt --target "$backing" --bytes --df --json | jq -r '.filesystems[0].avail')
+        min_bytes=$((50 * 1024 * 1024 * 1024))  # need >= ~50 GB to bother
+        if [ "$avail_bytes" -lt "$min_bytes" ]; then
+          echo "::notice::Only ${avail_bytes} bytes free on $backing (<50GB); skipping btrfs loopback and relying on remove-software freed space."
+          exit 0
+        fi
+        # Use 80% of available space (btrfs needs headroom for metadata).
+        final_bytes=$(( avail_bytes * 80 / 100 ))
+        sudo truncate -s "$final_bytes" "$loopback_file"
+        sudo mkfs.btrfs -f -r "$target_dir" "$loopback_file"
+        sudo systemd-mount "$loopback_file" "$target_dir" --options="compress-force=zstd:2"
+        echo "Mounted btrfs loopback $loopback_file ($final_bytes bytes) at $target_dir"
 
     - name: Add Ubuntu resolute apt source
       if: inputs.update-podman == 'true'
