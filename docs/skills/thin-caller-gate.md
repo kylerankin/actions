@@ -15,6 +15,21 @@ which delegate to `projectbluefin/actions` reusables stay small (default
 from advisory (weekly `factory-drift.yml` drift check) to machine-enforced via
 `scripts/validate_thin_caller.py` + a dedicated CI workflow.
 
+## When to Use
+
+- Adding or changing the caller-workflow size gate
+- Editing `scripts/validate_thin_caller.py` or its tests
+- Wiring the gate into CI, or changing `thin-caller-gate.yml`'s triggers or `paths:`
+- A caller workflow trips the gate and you need to decide between extracting a
+  reusable and adjusting the threshold
+
+## When NOT to Use
+
+- Auditing caller size in *consumer* repos — that is `factory-drift.yml`'s
+  scheduled job, not this gate
+- A workflow has no active `uses: projectbluefin/actions` reference; it is not a
+  caller and this gate does not apply to it
+
 ## Files
 
 | File | Role |
@@ -33,7 +48,7 @@ from advisory (weekly `factory-drift.yml` drift check) to machine-enforced via
 - Threshold is 50. If a caller exceeds it, extract its logic into a reusable in
   `projectbluefin/actions` rather than growing the caller.
 
-## Procedure
+## Core Process
 
 1. Change `scripts/validate_thin_caller.py`? Update `tests/test_validate_thin_caller.py`
    and run `python3 scripts/validate_thin_caller.py --root .` to confirm exit 0.
@@ -42,9 +57,29 @@ from advisory (weekly `factory-drift.yml` drift check) to machine-enforced via
 3. A real caller in a consumer repo exceeds the gate → fix by extracting a reusable,
    not by raising the threshold.
 
-## Pitfalls
+## Red Flags
 
-- Do not count commented-out `uses:` as a caller — that was the original false-positive
-  bug that flagged every reusable's header documentation.
-- The gate runs per-repo against that repo's own `.github/workflows`; it does not
-  scrape consumer repos (that is what `factory-drift.yml` still does on a schedule).
+- The gate flags a reusable workflow whose only `projectbluefin/actions`
+  reference is commented-out header documentation — the comment-skip in
+  `file_uses_projectbluefin` has regressed
+- Someone proposes raising `--max-lines` to make a failing caller pass
+- The gate is expected to catch an oversized caller living in a consumer repo;
+  it only ever scans its own repo's `.github/workflows`
+- `scripts/validate_thin_caller.py` changed but `tests/test_validate_thin_caller.py` did not
+
+## Common Rationalizations
+
+| Rationalization | Reality |
+|---|---|
+| "The caller is only a bit over 50 lines, just bump the threshold." | The threshold is the contract. Extract the logic into a reusable in `projectbluefin/actions` instead. |
+| "A commented-out `uses:` still counts as a caller." | It does not. Treating documentation as a caller was the original false-positive bug that flagged every reusable's header block. |
+| "The weekly drift check already covers this." | `factory-drift.yml` is advisory and scheduled. This gate fails the build at PR time — that is the point of issue #411. |
+| "This gate protects consumer repos too." | It runs per-repo against that repo's own `.github/workflows`. Consumer scraping stays with `factory-drift.yml`. |
+
+## Verification
+
+- [ ] `python3 scripts/validate_thin_caller.py --root .` exits 0
+- [ ] `pytest tests/test_validate_thin_caller.py` passes
+- [ ] A workflow whose only `projectbluefin/actions` reference is commented out is **not** reported as a caller
+- [ ] `thin-caller-gate.yml` triggers on both `pull_request` and `push` to `main`, filtered to `.github/workflows/**` and `scripts/validate_thin_caller.py`
+- [ ] Any caller that exceeds the threshold was fixed by extracting a reusable, not by raising `--max-lines`
