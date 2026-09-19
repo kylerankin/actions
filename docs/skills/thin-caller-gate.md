@@ -34,7 +34,7 @@ from advisory (weekly `factory-drift.yml` drift check) to machine-enforced via
 
 | File | Role |
 |---|---|
-| `scripts/validate_thin_caller.py` | Finds `.github/workflows/*.yml{,a}` whose **active** (non-comment) content has a `uses: projectbluefin/actions/...` ref; fails if effective lines > `--max-lines`. |
+| `scripts/validate_thin_caller.py` | Finds `.github/workflows/*.{yml,yaml}` whose **active** (non-comment) content has a `uses: projectbluefin/actions/...` ref; fails if effective lines > `--max-lines`. |
 | `.github/workflows/thin-caller-gate.yml` | CI job that runs the validator on `pull_request` and `push` to `main`, gated on `.github/workflows/**` and the script. |
 | `tests/test_validate_thin_caller.py` | Unit tests for the validator. |
 
