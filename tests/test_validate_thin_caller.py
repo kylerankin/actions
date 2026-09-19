@@ -38,6 +38,11 @@ def test_file_uses_projectbluefin(tmp_path):
     f2.write_text("uses: actions/checkout@v4\n")
     assert file_uses_projectbluefin(f2) is False
 
+    # A commented-out reference is documentation, not a caller (issue #546).
+    f3 = tmp_path / "commented.yml"
+    f3.write_text("#   uses: projectbluefin/actions/.github/workflows/reusable-build.yml@v1\nname: x\n")
+    assert file_uses_projectbluefin(f3) is False
+
 
 def test_find_workflows(tmp_path):
     wf_dir = tmp_path / ".github" / "workflows"
