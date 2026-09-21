@@ -45,7 +45,9 @@ call it from their own PR checks so a caller that exceeds the threshold fails
 before it reaches that repo's `main`:
 
 ```yaml
-- uses: projectbluefin/actions/.github/workflows/reusable-thin-caller-gate.yml@v1
+jobs:
+  thin-caller-gate:
+    uses: projectbluefin/actions/.github/workflows/reusable-thin-caller-gate.yml@v1
 ```
 
 The reusable re-checks-out `projectbluefin/actions@v1` and runs the same

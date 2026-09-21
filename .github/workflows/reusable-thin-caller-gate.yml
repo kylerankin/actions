@@ -10,7 +10,7 @@ name: reusable-thin-caller-gate
 #
 # Single source of truth: the reusable re-checks-out projectbluefin/actions@v1
 # to run the canonical scripts/validate_thin_caller.py, so every consumer
-# enforces the same rule. Opt in from a consumer PR workflow by adding a step
+# enforces the same rule. Opt in from a consumer PR workflow by adding a job
 # that calls this reusable at @v1.
 
 on:
