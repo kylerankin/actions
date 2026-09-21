@@ -150,7 +150,12 @@ falls below the success-rate threshold.
 
 ### Alerting behavior
 
-- Success rate = `successful completed runs / completed non-skipped runs`
+- Success rate = `successful completed runs / completed non-skipped, non-cancelled runs`. A
+  `cancelled` run never produced a build result (aborted by a push, `@v1` advance, or manual
+  cancel), so it is excluded from the denominator just like `skipped` — counting it as a failure
+  raised false alerts, e.g. projectbluefin/dakota#482 where 4 cancelled in-flight runs dropped the
+  reported rate to 60%.
+- Real build outcomes (`failure`, `action_failed`, `timed_out`) still count against the rate.
 - Window = last 24 hours
 - Threshold = 80%
 - Open issues are deduplicated by repo + pipeline title prefix

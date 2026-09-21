@@ -20,7 +20,6 @@ jobs:
     steps:
       - name: Generate common issue token
         id: app-token
-        continue-on-error: true
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: ${{ secrets.MERGERAPTOR_APP_ID }}
@@ -38,24 +37,19 @@ jobs:
 
           WINDOW_HOURS=24
           THRESHOLD=80
-          CUTOFF_EPOCH=$(date -u -d "${WINDOW_HOURS} hours ago" '+%s')
-
-          if [[ -n "${COMMON_ISSUE_TOKEN}" ]]; then
-            ISSUE_REPO="projectbluefin/common"
-            ISSUE_TOKEN="${COMMON_ISSUE_TOKEN}"
-          else
-            ISSUE_REPO="${GITHUB_REPOSITORY}"
-            ISSUE_TOKEN="${GH_TOKEN}"
-            echo "::warning::The common issue token is unavailable; factory alerts will be filed in ${ISSUE_REPO}."
-          fi
+          COMMON_REPO="projectbluefin/common"
 
           monitor_pipeline() {
             local repo="$1"
             local pipeline="$2"
             local workflow="$3"
 
-            local runs_json recent_json completed_json total success rate_display rate_value status failures_md
-
+            # Fetch the runs, then delegate window/success-rate computation to
+            # scripts/monitor_pipeline.py — the unit-tested core. Keeping the
+            # logic in one place stops the workflow bash and its tests from
+            # drifting (the cancelled-run exclusion below landed in exactly one
+            # function, and this call runs that exact function).
+            local runs_json
             runs_json=$(gh run list \
               --repo "${repo}" \
               --workflow "${workflow}" \
@@ -63,69 +57,14 @@ jobs:
               --json createdAt,status,conclusion,url \
               2>/dev/null || echo '[]')
 
-            recent_json=$(jq --argjson cutoff "${CUTOFF_EPOCH}" '
-              [ .[]
-              | select((.createdAt | fromdateiso8601) >= $cutoff)
-              ]
-            ' <<<"${runs_json}")
-
-            completed_json=$(jq '
-              [ .[]
-              # Only genuine build outcomes count toward the success rate.
-              # Cancelled runs were preempted (not failed) and action_required
-              # runs are pending approval — neither produced a build result, so
-              # counting them deflates the rate and fires false alerts
-              # (projectbluefin/actions#483). skipped/in_progress excluded too.
-              | select(.status == "completed" and (.conclusion == "success" or .conclusion == "failure"))
-              ]
-            ' <<<"${recent_json}")
-
-            total=$(jq 'length' <<<"${completed_json}")
-            success=$(jq '[ .[] | select(.conclusion == "success") ] | length' <<<"${completed_json}")
-
-            if (( total > 0 )); then
-              rate_value=$(( success * 100 / total ))
-              rate_display="${rate_value}%"
-              if (( rate_value < THRESHOLD )); then
-                status="alert"
-              else
-                status="healthy"
-              fi
-            else
-              rate_value=-1
-              rate_display="n/a"
-              status="no-runs"
-            fi
-
-            failures_md=$(jq -r '
-              [
-                .[]
-                | select(.conclusion != "success")
-                | "- [" + .conclusion + "](" + .url + ")"
-              ][0:5][]
-            ' <<<"${completed_json}" || true)
-
-            jq -n \
-              --arg repo "${repo}" \
-              --arg pipeline "${pipeline}" \
-              --arg workflow "${workflow}" \
-              --argjson total "${total}" \
-              --argjson success "${success}" \
-              --argjson rate_value "${rate_value}" \
-              --arg rate_display "${rate_display}" \
-              --arg status "${status}" \
-              --arg failures_md "${failures_md}" \
-              '{
-                repo: $repo,
-                pipeline: $pipeline,
-                workflow: $workflow,
-                total: $total,
-                success: $success,
-                rate_value: $rate_value,
-                rate_display: $rate_display,
-                status: $status,
-                failures_md: $failures_md
-              }'
+            python3 scripts/monitor_pipeline.py \
+              --runs-json <(echo "${runs_json}") \
+              --repo "${repo}" \
+              --pipeline "${pipeline}" \
+              --workflow "${workflow}" \
+              --threshold "${THRESHOLD}" \
+              --window-hours "${WINDOW_HOURS}" \
+              --output /dev/stdout
           }
 
           results='[]'
@@ -166,14 +105,14 @@ jobs:
             echo "${summary_table}"
           } >> "${GITHUB_STEP_SUMMARY}"
 
-          open_issues_json=$(GH_TOKEN="${ISSUE_TOKEN}" gh issue list \
-            --repo "${ISSUE_REPO}" \
+          open_issues_json=$(GH_TOKEN="${COMMON_ISSUE_TOKEN}" gh issue list \
+            --repo "${COMMON_REPO}" \
             --state open \
             --limit 100 \
             --json number,title,url)
 
-          existing_labels=$(GH_TOKEN="${ISSUE_TOKEN}" gh label list \
-            --repo "${ISSUE_REPO}" \
+          existing_labels=$(GH_TOKEN="${COMMON_ISSUE_TOKEN}" gh label list \
+            --repo "${COMMON_REPO}" \
             --limit 200 \
             --json name \
             --jq '.[].name')
@@ -183,7 +122,7 @@ jobs:
             if grep -Fxq "${label}" <<<"${existing_labels}"; then
               label_args+=(--label "${label}")
             else
-              echo "::warning::Label '${label}' does not exist in ${ISSUE_REPO}; skipping it."
+              echo "::warning::Label '${label}' does not exist in ${COMMON_REPO}; skipping it."
             fi
           done
 
@@ -235,8 +174,8 @@ jobs:
           EOF
             )
 
-            GH_TOKEN="${ISSUE_TOKEN}" gh issue create \
-              --repo "${ISSUE_REPO}" \
+            GH_TOKEN="${COMMON_ISSUE_TOKEN}" gh issue create \
+              --repo "${COMMON_REPO}" \
               --title "${issue_title}" \
               --body "${issue_body}" \
               "${label_args[@]}"

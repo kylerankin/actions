@@ -67,15 +67,15 @@ def compute_pipeline_health(
         if _parse_epoch(r.get("createdAt", "")) >= cutoff_epoch
     ]
 
-    # Only genuine build outcomes count toward the success rate. Cancelled runs
-    # were preempted (not failed) and action_required runs are pending approval —
-    # neither produced a build result, so counting them deflates the rate and
-    # fires false alerts (projectbluefin/actions#483). success/(success+failure)
-    # is the standard build success rate; skipped/in_progress/queued excluded too.
+    # Only completed builds count. A run that never finished — cancelled
+    # (aborted by a push/tag change/manual cancel) or skipped — did not
+    # produce a build result, so it is excluded from the success rate just
+    # like a skipped run. Real build outcomes (failure, action_failed,
+    # timed_out) still count against the rate.
     completed = [
         r for r in recent
         if r.get("status") == "completed"
-        and r.get("conclusion") in ("success", "failure")
+        and r.get("conclusion") not in ("skipped", "cancelled")
     ]
 
     total = len(completed)
@@ -198,7 +198,12 @@ def main() -> int:  # pragma: no cover
     with open(args.output, "w") as f:
         json.dump(result, f, indent=2)
 
-    print(f"{args.repo} / {args.pipeline}: {health['rate_display']} ({health['status']})")
+    # Human summary goes to stderr; stdout carries only the result JSON, which
+    # the workflow captures into a row and pipes back into jq.
+    print(
+        f"{args.repo} / {args.pipeline}: {health['rate_display']} ({health['status']})",
+        file=sys.stderr,
+    )
     return 0
 
 
