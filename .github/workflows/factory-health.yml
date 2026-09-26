@@ -7,6 +7,7 @@ on:
 
 permissions:
   actions: read
+  contents: read
   issues: write
 
 concurrency:
@@ -18,6 +19,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Generate common issue token
         id: app-token
         continue-on-error: true
@@ -33,6 +37,7 @@ jobs:
         id: monitor
         env:
           COMMON_ISSUE_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           APP_TOKEN_OUTCOME: ${{ steps.app-token.outcome }}
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -64,13 +69,18 @@ jobs:
           # keeps monitoring alive when the token cannot be minted, but it also
           # makes the whole job conclude `success`, so the fallback was silent
           # in the checks UI for months (projectbluefin/actions#556).
+          # ISSUE_AUTHOR is the login each token files issues as, in the form
+          # `gh issue list --json author` reports it. The close pass only acts
+          # on alerts this account opened.
           if [[ -n "${COMMON_ISSUE_TOKEN}" ]]; then
             ISSUE_REPO="${INTENDED_ISSUE_REPO}"
             ISSUE_TOKEN="${COMMON_ISSUE_TOKEN}"
+            ISSUE_AUTHOR="app/${APP_SLUG}"
             ALERT_ROUTING="intended"
           else
             ISSUE_REPO="${GITHUB_REPOSITORY}"
             ISSUE_TOKEN="${GH_TOKEN}"
+            ISSUE_AUTHOR="app/github-actions"
             ALERT_ROUTING="fallback"
             echo "::warning::Could not mint the ${INTENDED_ISSUE_REPO} issue token (app-token step: ${APP_TOKEN_OUTCOME}); factory alerts will be misrouted to ${ISSUE_REPO}. See the app-token step log for the API error."
           fi
@@ -262,7 +272,74 @@ jobs:
             --repo "${ISSUE_REPO}" \
             --state open \
             --limit 100 \
-            --json number,title,url)
+            --json number,title,url,author)
+
+          # Close alerts whose pipeline is healthy again. The dedupe check in
+          # the breach loop below matches on the issue title prefix, so a stale
+          # open alert silently mutes every later breach of that same
+          # repo+pipeline. Nothing closed these issues before, and
+          # projectbluefin/actions#490 is the proof: dakota Promote recovered to
+          # 100% on the rerun and its alert stayed open, muting that pipeline
+          # indefinitely. Only alerts opened by ISSUE_AUTHOR are closed: a title
+          # prefix alone does not prove this workflow opened the issue. Closing
+          # is best-effort — a single issue that cannot be closed must not stop
+          # the alerting pass that follows.
+          printf '%s' "${results}" > "${RUNNER_TEMP}/factory-health-results.json"
+          printf '%s' "${open_issues_json}" > "${RUNNER_TEMP}/factory-health-open-issues.json"
+
+          # Resolving recoveries is itself best-effort: this step runs under
+          # `set -euo pipefail`, so an unguarded failure here (missing file,
+          # traceback) would abort before the breach loop and take down the
+          # pre-existing alerting pass — the opposite of what the note above
+          # promises. Fall back to "nothing recovered" and keep going.
+          if ! recovered_json=$(python3 scripts/factory_health_resolve.py \
+            --results "${RUNNER_TEMP}/factory-health-results.json" \
+            --open-issues "${RUNNER_TEMP}/factory-health-open-issues.json" \
+            --author "${ISSUE_AUTHOR}"); then
+            echo "::warning::Could not resolve recovered alerts; skipping the close pass and continuing to alerting."
+            recovered_json='[]'
+          fi
+
+          issues_closed=0
+          while IFS= read -r recovered; do
+            [[ -n "${recovered}" ]] || continue
+
+            number=$(jq -r '.number' <<<"${recovered}")
+            repo=$(jq -r '.repo' <<<"${recovered}")
+            pipeline=$(jq -r '.pipeline' <<<"${recovered}")
+            workflow=$(jq -r '.workflow' <<<"${recovered}")
+            rate_display=$(jq -r '.rate_display' <<<"${recovered}")
+            success=$(jq -r '.success' <<<"${recovered}")
+            total=$(jq -r '.total' <<<"${recovered}")
+
+            recovery_body=$(cat <<EOF
+          ## Factory success rate recovered
+
+          \`${workflow}\` (${repo} / ${pipeline}) is back above the ${THRESHOLD}% threshold: **${rate_display}** (${success}/${total}) over the last ${WINDOW_HOURS} hours.
+
+          Closing automatically so this pipeline can alert again — an open alert suppresses new ones for the same repo and pipeline.
+
+          Closed automatically by \`.github/workflows/factory-health.yml\`.
+          EOF
+            )
+
+            if ! GH_TOKEN="${ISSUE_TOKEN}" gh issue comment "${number}" \
+              --repo "${ISSUE_REPO}" \
+              --body "${recovery_body}"; then
+              echo "::warning::Could not comment on recovered alert ${ISSUE_REPO}#${number}; leaving it open."
+              continue
+            fi
+
+            if ! GH_TOKEN="${ISSUE_TOKEN}" gh issue close "${number}" \
+              --repo "${ISSUE_REPO}" \
+              --reason completed; then
+              echo "::warning::Could not close recovered alert ${ISSUE_REPO}#${number}."
+              continue
+            fi
+
+            echo "Closed recovered alert #${number} (${repo} ${pipeline}: ${rate_display})."
+            issues_closed=$((issues_closed + 1))
+          done < <(jq -c '.[]' <<<"${recovered_json}")
 
           existing_labels=$(GH_TOKEN="${ISSUE_TOKEN}" gh label list \
             --repo "${ISSUE_REPO}" \
@@ -346,7 +423,7 @@ jobs:
             echo "::notice::${low_sample} pipeline(s) are below the ${MIN_RUNS}-run sample floor; reported as low-sample instead of alert."
           fi
 
-          echo "Opened ${issues_opened} issue(s)."
+          echo "Opened ${issues_opened} issue(s); closed ${issues_closed} recovered issue(s)."
 
       # Runs last so the health summary above is always produced, then turns the
       # degraded state into a red check. Without this the job concludes
