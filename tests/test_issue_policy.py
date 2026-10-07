@@ -1449,6 +1449,57 @@ def test_missing_main_ci_never_authorizes_writes(tmp_path, monkeypatch):
     assert not client.writes_authorized
 
 
+@pytest.mark.parametrize("status", ["queued", "in_progress"])
+def test_main_ci_pending_defers_not_fails(tmp_path, monkeypatch, status):
+    # A run that has started but not finished is not a failure: defer with a
+    # MainCIPending (notice, exit 0) rather than raising red, so lifecycle
+    # events in the merge window are not reported as failures.
+    client, path, workspace, responses = trusted_source_fixture(tmp_path, monkeypatch)
+    key = f"repos/{client.repo}/actions/workflows/unit-tests.yml/runs?head_sha={'a' * 40}&branch=main&per_page=100"
+    responses[key]["workflow_runs"][0]["status"] = status
+    with pytest.raises(policy.MainCIPending):
+        client.require_deployed_policy(path, workspace)
+    assert not client.writes_authorized
+
+
+def test_pending_main_ci_defers_apply_without_writes(tmp_path, monkeypatch):
+    # main() must catch MainCIPending from require_deployed_policy, print a
+    # notice, and exit 0 without any write (no sync_catalog, no apply).
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    catalog = copy.deepcopy(CATALOG)
+    catalog["main_ci_workflows"] = [".github/workflows/unit-tests.yml"]
+    catalog_path = tmp_path / "catalog.json"
+    catalog_path.write_text(json.dumps(catalog))
+    writes = []
+
+    def raise_pending(*args):
+        raise policy.MainCIPending("Main CI .github/workflows/unit-tests.yml at aaaa is in_progress; deferring apply until it completes")
+
+    monkeypatch.setattr(policy.GitHub, "require_deployed_policy", raise_pending)
+    monkeypatch.setattr(policy.GitHub, "sync_catalog", lambda *a: writes.append(("sync",)))
+    monkeypatch.setattr(policy.GitHub, "apply", lambda *a: writes.append(("apply",)))
+    captured = []
+    real_print = __import__("builtins").print
+
+    def capture_print(*args, **kwargs):
+        captured.append(" ".join(str(a) for a in args))
+        real_print(*args, **kwargs)
+
+    monkeypatch.setattr("builtins.print", capture_print)
+    assert policy.main(["--catalog", str(catalog_path), "--apply"]) == 0
+    assert writes == [], "pending CI must not write anything"
+    assert any(line.startswith("::notice::") and "in_progress" in line for line in captured)
+
+
+def test_pending_main_ci_message_names_repo_workflow_and_sha(tmp_path, monkeypatch):
+    client, path, workspace, responses = trusted_source_fixture(tmp_path, monkeypatch)
+    key = f"repos/{client.repo}/actions/workflows/unit-tests.yml/runs?head_sha={'a' * 40}&branch=main&per_page=100"
+    responses[key]["workflow_runs"][0]["status"] = "in_progress"
+    with pytest.raises(policy.MainCIPending, match="unit-tests.yml") as info:
+        client.require_deployed_policy(path, workspace)
+    assert str("a" * 40) in str(info.value)
+
+
 def test_failed_notice_post_does_not_mark_request_delivered(monkeypatch):
     record = issue(("needs-verification", "kind/bug"), delivery_body())
     record["html_url"] = "https://github.com/projectbluefin/common/issues/10"

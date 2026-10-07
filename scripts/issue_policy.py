@@ -31,6 +31,20 @@ class StaleRecord(RuntimeError):
     """A human changed this record; skip it rather than overwrite that work."""
 
 
+class MainCIPending(Exception):
+    """Main CI for the evaluated revision is still queued or in progress.
+
+    A pending run is not yet deployment evidence, but it is not a failure
+    either: the newest push of a ``main_ci_workflows`` entry has started and
+    is running. Report it as a notice and defer rather than ending the
+    reconcile job red, since lifecycle events cluster in the merge window
+    right after a merge lands and the next schedule picks the event up once
+    the run completes. Deliberately not a ``RuntimeError`` so the pending
+    defer is distinct from a completed non-success / missing / skipped run,
+    which stay red.
+    """
+
+
 def protected_labels(catalog):
     """Exact operator-owned names, compared like GitHub labels, never managed here."""
     return {name.lower() for name in catalog.get("protected_labels", [])}
@@ -678,7 +692,18 @@ class GitHub:
                           and run.get("head_branch") == branch
                           and run.get("event") in {"push", "workflow_dispatch"}]
             latest = max(candidates, key=lambda run: (run["id"], run.get("run_attempt", 1)), default=None)
-            if not latest or latest.get("status") != "completed" or latest.get("conclusion") != "success":
+            if not latest:
+                # No run for this revision: no deployment evidence, keep the gate red.
+                raise RuntimeError(f"Apply requires successful main CI: {repo} {workflow} at {sha}")
+            if latest.get("status") != "completed":
+                # Queued or in progress: a run exists and is running, so this is a
+                # defer (notice, exit 0), not a failure. The next schedule re-checks.
+                raise MainCIPending(
+                    f"Main CI {workflow} at {sha} is {latest.get('status')}; "
+                    f"deferring apply until it completes"
+                )
+            if latest.get("conclusion") != "success":
+                # Completed but not successful: a real failure, keep the gate red.
                 raise RuntimeError(f"Apply requires successful main CI: {repo} {workflow} at {sha}")
 
     def require_deployed_policy(self, catalog_path, workspace):
@@ -915,7 +940,14 @@ def main(argv=None):
     args.repo = catalog["repository"]
     github = GitHub(args.repo, catalog)
     if args.apply:
-        github.require_deployed_policy(catalog_path, args.workspace)
+        try:
+            github.require_deployed_policy(catalog_path, args.workspace)
+        except MainCIPending as error:
+            # Base CI for the evaluated revision is still running. Report a
+            # notice, write nothing, and exit 0 so the reconcile job is not red;
+            # the hourly schedule reconciles without error once it completes.
+            print(f"::notice::{error}")
+            return 0
     if args.authorize_only:
         if not args.apply:
             parser.error("--authorize-only requires --apply")
