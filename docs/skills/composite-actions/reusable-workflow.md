@@ -374,17 +374,19 @@ The legacy semver mode checks out with `fetch-depth: 0` (required by git-cliff),
 
 Promotes one or more OCI variants (e.g. `:testing` → `:stable`) for bootc image repos. The workflow resolves the source digest once, optionally runs testsuite e2e against that exact digest, then re-verifies cosign and promotes the same digest to the target tag. The digest is never re-resolved after the gate, eliminating TOCTOU drift between test and promotion.
 
-### Testsuite e2e pin — keep aligned with bluefin's `run-testsuite.yml`
+### Testsuite e2e pin — keep aligned with testsuite's managed `v1` tag
 
-The `release-gate` job calls `projectbluefin/testsuite/.github/workflows/e2e.yml@<SHA> # v1`. bluefin's `run-testsuite.yml` does **not** pin a SHA — it calls the same workflow with the floating `e2e.yml@v1` managed tag. This repo's pin must therefore match the SHA that bluefin's `@v1` tag currently resolves to. The two workflows execute the same testsuite e2e code — bluefin at PR time, the release gate at promotion time. A drift between them means the gate and bluefin CI can disagree on the same image.
+The `release-gate` job calls `projectbluefin/testsuite/.github/workflows/e2e.yml@<SHA> # v1`. The testsuite repo manages a floating `e2e.yml@v1` tag (advanced by its `update-v1-tag.yml` workflow) rather than pinning a SHA itself. This repo's pin must therefore match the SHA that testsuite's `v1` tag currently resolves to. The two workflows execute the same testsuite e2e code — a consumer repo at PR time, the release gate at promotion time. A drift between them means the gate and consumer CI can disagree on the same image.
 
-To verify alignment before merging a change to this workflow, resolve bluefin's `@v1` tag to the SHA it points at and confirm the in-repo pins match that SHA:
+> **Source of truth is the testsuite repo itself.** `projectbluefin/bluefin` previously mirrored testsuite's `@v1` tag in its `run-testsuite.yml`, but that repo was archived in September 2026. Always resolve the SHA directly against `projectbluefin/testsuite` — never against the archived bluefin repo.
+
+To verify alignment before merging a change to this workflow, resolve testsuite's `v1` tag to the SHA it points at and confirm the in-repo pins match that SHA:
 
 ```bash
 # The pins in this repo (release gate, migration-test, upgrade-test) — all must be one SHA:
 grep -n 'testsuite.*e2e.yml@' .github/workflows/*.yml
 
-# What bluefin's floating @v1 tag actually resolves to (the source of truth).
+# What testsuite's floating @v1 tag actually resolves to (the source of truth).
 # Lightweight tag: one `refs/tags/v1` line with the commit SHA.
 # Annotated tag: also prints `refs/tags/v1^{}` — use that peeled commit SHA.
 git ls-remote --tags https://github.com/projectbluefin/testsuite 'v1*'
