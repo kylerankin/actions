@@ -12,9 +12,9 @@ The release-gate inline pin comment is repeated across three workflow files:
   * the same SHA in every caller (so Renovate bumps them together)
   * the same ``# v1`` version comment in every caller
   * the inline release-gate comment must not claim a
-    ``projectbluefin/bluefin`` ``run-testsuite.yml`` SHA pin that does
-    not exist (bluefin uses the floating ``e2e.yml@v1`` managed tag
-    there)
+    ``projectbluefin/testsuite`` SHA pin that does
+    not exist (testsuite manages the floating ``e2e.yml@v1`` tag
+    itself, so no SHA pin there is ever to match)
 
 The refs must be full 40-char SHAs so the gate executes a fixed digest.
 """
@@ -40,11 +40,11 @@ E2E_REF_RE = re.compile(
 )
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
-# Any wording that asserts the in-repo pin matches a SHA in
-# projectbluefin/bluefin's run-testsuite.yml. Bluefin uses the floating
-# e2e.yml@v1 managed tag there, so no SHA pin exists to match. (See
-# docs/skills/composite-actions/reusable-workflow.md for the verification
-# command the comment used to prescribe.)
+# Any wording that asserts the in-repo pin matches a SHA in some
+# consumer's run-testsuite.yml. The testsuite repo manages a floating
+# e2e.yml@v1 tag rather than pinning a SHA itself, so no SHA pin exists
+# to match. (See docs/skills/composite-actions/reusable-workflow.md for
+# the verification command the comment used to prescribe.)
 FORBIDDEN_RELEASE_GATE_PHRASES = (
     "matches projectbluefin/bluefin run-testsuite.yml pin",
     "matches bluefin run-testsuite.yml pin",
@@ -105,7 +105,8 @@ def test_all_callers_share_the_same_sha():
 
 
 def test_release_gate_comment_does_not_claim_a_bluefin_sha_pin():
-    """bluefin's run-testsuite.yml pins no SHA — the comment must reflect that."""
+    """The testsuite repo manages a floating v1 tag and pins no SHA — the
+    release-gate comment must not claim a pin match that never exists."""
     _, comment = _e2e_refs()[WORKFLOW_FILES[0]]
     for phrase in FORBIDDEN_RELEASE_GATE_PHRASES:
         assert phrase not in comment, (
