@@ -11,10 +11,10 @@ The release-gate inline pin comment is repeated across three workflow files:
 
   * the same SHA in every caller (so Renovate bumps them together)
   * the same ``# v1`` version comment in every caller
-  * the inline release-gate comment must not claim a
-    ``projectbluefin/testsuite`` SHA pin that does
-    not exist (testsuite manages the floating ``e2e.yml@v1`` tag
-    itself, so no SHA pin there is ever to match)
+  * the inline release-gate comment must not claim the in-repo pin
+    matches a SHA pinned in a consumer's ``run-testsuite.yml`` or what
+    ``@v1`` resolves to (testsuite manages the floating ``e2e.yml@v1``
+    tag itself, so no consumer SHA pin exists to match)
 
 The refs must be full 40-char SHAs so the gate executes a fixed digest.
 """
