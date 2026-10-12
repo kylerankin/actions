@@ -193,6 +193,17 @@ jobs:
           ready=false
 
           while :; do
+            # If the branch head moved since the bump gate qualified it, stop
+            # waiting now instead of burning through the timeout on a commit
+            # this workflow would reject at merge time anyway.
+            headRefOid=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+              --json headRefOid --jq .headRefOid 2>/dev/null || echo "")
+            if [ -n "$headRefOid" ] && [ "$headRefOid" != "$HEAD_SHA" ]; then
+              echo "PR #$PR_NUMBER head moved to $headRefOid since qualification ($HEAD_SHA); not merging"
+              ready=false
+              break
+            fi
+
             checks=$(gh pr checks "$PR_NUMBER" \
               --repo "$GITHUB_REPOSITORY" \
               --json name,state 2>/dev/null || true)
@@ -259,6 +270,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.token || github.token }}
           PR_NUMBER: ${{ steps.find-pr.outputs.pr_number }}
           MERGE_METHOD: ${{ inputs.merge_method }}
+          HEAD_SHA: ${{ inputs.head_sha }}
         run: |
           set -euo pipefail
           # --auto is intentionally never used:
@@ -289,13 +301,22 @@ jobs:
             esac
           }
 
-          if gh pr merge "$PR_NUMBER" "${flags[@]}" --repo "$GITHUB_REPOSITORY" 2>merge.err; then
+          if gh pr merge "$PR_NUMBER" "${flags[@]}" --match-head-commit "$HEAD_SHA" --repo "$GITHUB_REPOSITORY" 2>merge.err; then
             cat merge.err >&2
             report_outcome
             exit 0
           fi
 
           cat merge.err >&2
+
+          # A moved head is rejected with HTTP 409. That is a normal,
+          # non-failing outcome here (Renovate retries; a later workflow_run
+          # re-evaluates the PR), so log it and succeed rather than failing
+          # the job on a branch the gate never qualified.
+          if grep -qi "409" merge.err; then
+            echo "PR #$PR_NUMBER head moved after qualification; merge skipped, Renovate will retry"
+            exit 0
+          fi
 
           # Already enqueued by an earlier attempt — that is success. Note this
           # message does NOT contain the substring "merge queue".
@@ -308,7 +329,7 @@ jobs:
           # when a strategy flag is passed on a queued branch. Retry with none.
           if [ "${#flags[@]}" -ne 0 ] && grep -qi "merge queue" merge.err; then
             echo "Base branch uses a merge queue; retrying without an explicit strategy"
-            if gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" 2>retry.err; then
+            if gh pr merge "$PR_NUMBER" --match-head-commit "$HEAD_SHA" --repo "$GITHUB_REPOSITORY" 2>retry.err; then
               cat retry.err >&2
               report_outcome
               exit 0
