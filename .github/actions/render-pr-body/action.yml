@@ -33,16 +33,20 @@ inputs:
     description: 'HTML URL of last stable release'
     required: false
     default: ''
-  commit_count:
-    description: 'Number of commits testing is ahead of main/stable'
+  insertions:
+    description: 'Insertions in the diff between the promotion branch and the target branch'
     required: false
     default: '0'
-  commits_json:
-    description: 'JSON array of {sha, subject} objects'
+  deletions:
+    description: 'Deletions in the diff between the promotion branch and the target branch'
+    required: false
+    default: '0'
+  files_json:
+    description: 'JSON array of changed file paths (relative to repo root)'
     required: false
     default: '[]'
   compare_url:
-    description: 'GitHub compare URL (main...testing)'
+    description: 'GitHub compare URL (target...promotion branch)'
     required: false
     default: ''
   e2e_image:
@@ -91,8 +95,9 @@ runs:
         DAYS_AGO:      ${{ inputs.days_since_stable }}
         LAST_TAG:      ${{ inputs.last_release_tag }}
         LAST_URL:      ${{ inputs.last_release_url }}
-        COMMIT_COUNT:  ${{ inputs.commit_count }}
-        COMMITS_JSON:  ${{ inputs.commits_json }}
+        INSERTIONS:    ${{ inputs.insertions }}
+        DELETIONS:     ${{ inputs.deletions }}
+        FILES_JSON:    ${{ inputs.files_json }}
         COMPARE_URL:   ${{ inputs.compare_url }}
         E2E_IMAGE:     ${{ inputs.e2e_image }}
         AUTO_MERGE:    ${{ inputs.auto_merge }}
@@ -126,9 +131,10 @@ runs:
           --date          "${DATE}" \
           "${DAYS_ARGS[@]}" \
           "${TAG_ARGS[@]}" \
-          --commit-count  "${COMMIT_COUNT}" \
-          --commits-json  "${COMMITS_JSON}" \
-          --compare-url   "${COMPARE_URL}" \
+          --insertions  "${INSERTIONS}" \
+          --deletions   "${DELETIONS}" \
+          --files-json  "${FILES_JSON}" \
+          --compare-url "${COMPARE_URL}" \
           --source-branch "${SOURCE_BRANCH}" \
           --target-branch "${TARGET_BRANCH}" \
           --maintainer-workflow "${MAINTAINER_WORKFLOW}" \
