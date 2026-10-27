@@ -33,12 +33,6 @@ VARIANTS_WITH_DIGEST = [
     {"image": "dakota-nvidia", "digest": "sha256:b2c3d4e5f6a7b8c9b2c3d4e5f6a7b8c9b2c3d4e5f6a7b8c9b2c3d4e5f6a7b8c9"},
 ]
 
-COMMITS = [
-    {"sha": "abc1234def5678901", "subject": "feat: add new gnome extension"},
-    {"sha": "def5678abc1234567", "subject": "fix: resolve display issue"},
-]
-
-
 class TestSectionHeader:
     def test_contains_dinosaur_emoji(self):
         md = render_pr_body._section_header(
@@ -207,58 +201,49 @@ class TestSectionVariants:
         assert "—" in md
 
 
-class TestSectionCommits:
-    def test_returns_empty_when_no_commits(self):
-        md = render_pr_body._section_commits(0, [], None)
+class TestSectionChanges:
+    CHANGED_FILES = ["configs/a.toml", "configs/b.toml"]
+
+    def test_returns_empty_when_no_changes(self):
+        md = render_pr_body._section_changes([], 0, 0, None)
         assert md == ""
 
-    def test_shows_commit_count(self):
-        md = render_pr_body._section_commits(47, COMMITS, "https://example.com/compare")
-        assert "47" in md
+    def test_shows_file_count_and_stat(self):
+        md = render_pr_body._section_changes(self.CHANGED_FILES, 3, 1, None)
+        assert "**2 files changed**" in md
+        assert "+3 −1" in md
 
-    def test_singular_commit(self):
-        md = render_pr_body._section_commits(1, COMMITS[:1], None)
-        assert "1 commit" in md
-        assert "1 commits" not in md
+    def test_singular_file(self):
+        md = render_pr_body._section_changes(["configs/a.toml"], 3, 1, None)
+        assert "**1 file changed**" in md
+        assert "**2 files changed**" not in md
 
     def test_shows_compare_url(self):
-        md = render_pr_body._section_commits(3, COMMITS, "https://example.com/compare/main...testing")
-        assert "https://example.com/compare/main...testing" in md
+        md = render_pr_body._section_changes(
+            self.CHANGED_FILES, 3, 1, "https://example.com/compare/main...auto/promote")
+        assert "https://example.com/compare/main...auto/promote" in md
 
-    def test_shows_commit_subjects(self):
-        md = render_pr_body._section_commits(3, COMMITS, None)
-        assert "feat: add new gnome extension" in md
-        assert "fix: resolve display issue" in md
-
-    def test_commit_shas_shortened_to_7(self):
-        md = render_pr_body._section_commits(3, COMMITS, None)
-        assert "abc1234" in md
-        assert "abc1234def5678901" not in md  # full SHA must not appear
+    def test_lists_changed_files(self):
+        md = render_pr_body._section_changes(self.CHANGED_FILES, 3, 1, None)
+        assert "`configs/a.toml" in md
+        assert "`configs/b.toml" in md
 
     def test_is_collapsible_details_block(self):
-        md = render_pr_body._section_commits(3, COMMITS, None)
+        md = render_pr_body._section_changes(self.CHANGED_FILES, 3, 1, None)
         assert "<details>" in md
         assert "</details>" in md
 
-    def test_pipe_in_subject_escaped(self):
-        commits_with_pipe = [{"sha": "abc1234567890", "subject": "feat: add foo | bar"}]
-        md = render_pr_body._section_commits(1, commits_with_pipe, None)
-        # The pipe in the subject must be escaped so the table renders correctly
-        assert "foo \\| bar" in md or "foo | bar" not in md.split("feat:")[1].split("\n")[0]
+    @pytest.mark.parametrize("module", TEST_MODULES, ids=["action", "script"])
+    def test_empty_changes_uses_intro_only(self, module):
+        md = module._section_changes([], 0, 0, None)
+        assert md == ""
 
     @pytest.mark.parametrize("module", TEST_MODULES, ids=["action", "script"])
-    def test_empty_commit_list_uses_intro_only(self, module):
-        md = module._section_commits(2, [], None)
-        assert "### Changes since last stable" in md
-        assert "**2 commits** ahead of stable" in md
-        assert "<details>" not in md
-
-    @pytest.mark.parametrize("module", TEST_MODULES, ids=["action", "script"])
-    def test_commit_list_uses_details_block(self, module):
-        md = module._section_commits(3, COMMITS, None)
+    def test_changes_use_details_block(self, module):
+        md = module._section_changes(self.CHANGED_FILES, 3, 1, None)
         assert "### Changes since last stable" in md
         assert "<details>" in md
-        assert "abc1234" in md
+        assert "`configs/a.toml" in md
 
 
 class TestBuildTitle:
@@ -298,9 +283,10 @@ class TestMainRender:
             "--days-since-stable", "12",
             "--last-release-tag",  "stable-20260530-abc1234",
             "--last-release-url",  "https://github.com/projectbluefin/bluefin/releases/tag/stable-20260530-abc1234",
-            "--commit-count",    "54",
-            "--commits-json",    json.dumps(COMMITS),
-            "--compare-url",     "https://github.com/projectbluefin/bluefin/compare/main...testing",
+            "--insertions",        "3",
+            "--deletions",         "2",
+            "--files-json",        json.dumps(["configs/a.toml", "configs/b.toml"]),
+            "--compare-url",       "https://github.com/projectbluefin/bluefin/compare/main...auto/promote-testing-to-main",
             "--output",          str(out),
         ]
         try:
@@ -314,12 +300,12 @@ class TestMainRender:
         assert "🦕" in body
         assert "Bluefin" in body
         assert "2026-06-11" in body
-        assert "54" in body
+        assert "configs/a.toml" in body
         assert "12" in body and "days" in body.lower()
         assert "<!-- gate-section-start -->" in body
         assert "<!-- gate-section-end -->" in body
         assert "⏳" in body
-        assert "feat: add new gnome extension" in body
+        assert "**2 files changed**" in body
 
     def test_digest_render_contains_key_elements(self, tmp_path):
         out = tmp_path / "pr-body.md"
@@ -483,13 +469,14 @@ class TestPromotedBranchPair:
         assert "`promote-testing-to-main.yml`" in md
 
     @pytest.mark.parametrize("module", TEST_MODULES)
-    def test_commits_compare_label_follows_branches(self, module):
-        md = module._section_commits(
-            3, [], "https://example.com/compare",
+    def test_changes_compare_label_follows_branches(self, module):
+        md = module._section_changes(
+            ["configs/a.toml"], 3, 1, "https://example.com/compare",
             source_branch="main", target_branch="stable",
         )
         assert "Compare stable…main" in md
         assert "ahead of stable" in md
+        assert "+3 −1" in md
 
     @pytest.mark.parametrize("module", TEST_MODULES)
     def test_title_follows_branches(self, module):

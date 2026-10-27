@@ -361,7 +361,7 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Collect git log for PR body
+      - name: Collect diff for PR body
         if: steps.compare.outputs.sync_needed == 'true' && steps.rebuild.outputs.promoted != 'false'
         id: gitlog
         env:
@@ -369,23 +369,31 @@ jobs:
           TARGET_BRANCH: ${{ inputs.target_branch }}
         run: |
           set -euo pipefail
-          COUNT=$(git rev-list --count "origin/${TARGET_BRANCH}..origin/${SOURCE_BRANCH}" 2>/dev/null || echo 0)
-          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
 
-          # Build commits JSON safely — split on tab, never rely on shell JSON escaping
-          COMMITS_JSON=$(git log "origin/${TARGET_BRANCH}..origin/${SOURCE_BRANCH}" \
-            --pretty=format:'%H%x09%s' \
-            --max-count=20 \
-            | python3 -c '
-          import sys, json
-          rows = []
-          for line in sys.stdin:
-              sha, _, subject = line.rstrip("\n").partition("\t")
-              rows.append({"sha": sha, "subject": subject})
-          print(json.dumps(rows))
-          ' 2>/dev/null || echo '[]')
-          echo "commits_json=${COMMITS_JSON}" >> "$GITHUB_OUTPUT"
-          echo "compare_url=https://github.com/${{ github.repository }}/compare/${TARGET_BRANCH}...${SOURCE_BRANCH}" >> "$GITHUB_OUTPUT"
+          # The promotion PR body must describe the actual tree difference, not the
+          # merge-base distance between the source and target branches. The squash
+          # promotion branch (auto/promote-*) is rebuilt fresh every run with
+          # target_branch as its parent and the source branch's tree as a single
+          # commit, so the diff of target_branch against the promotion branch is
+          # exactly the content being promoted. Counting
+          # target..source instead reported how far the source branch has drifted
+          # — hundreds of commits and PRs already on stable — while the real diff
+          # was a couple of digest bumps. See projectbluefin/actions#691.
+          DIFF="$(git diff --numstat "origin/${TARGET_BRANCH}" "origin/${PROMOTION_BRANCH}" 2>/dev/null || true)"
+
+          # Binary entries print "-  - <path>"; the numeric guards skip them.
+          INSERTIONS=$(printf '%s\n' "$DIFF" | awk '$1 ~ /^[0-9]+$/ {s+=$1} END{print s+0}')
+          DELETIONS=$(printf '%s\n' "$DIFF" | awk '$2 ~ /^[0-9]+$/ {s+=$2} END{print s+0}')
+
+          # Build the changed-file list as JSON safely — one path per line, never
+          # rely on shell JSON escaping.
+          FILES_JSON=$(git diff --name-only "origin/${TARGET_BRANCH}" "origin/${PROMOTION_BRANCH}" 2>/dev/null \
+            | python3 -c 'import sys, json; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))' 2>/dev/null || echo '[]')
+
+          echo "insertions=${INSERTIONS}" >> "$GITHUB_OUTPUT"
+          echo "deletions=${DELETIONS}" >> "$GITHUB_OUTPUT"
+          echo "files_json=${FILES_JSON}" >> "$GITHUB_OUTPUT"
+          echo "compare_url=https://github.com/${{ github.repository }}/compare/${TARGET_BRANCH}...${PROMOTION_BRANCH}" >> "$GITHUB_OUTPUT"
 
       # auto_merge, not enqueue_promotion: the body states how this PR gets
       # merged at all, and this step reruns on every refresh event. In the
@@ -406,8 +414,9 @@ jobs:
           days_since_stable: ${{ steps.last-release.outputs.days }}
           last_release_tag:  ${{ steps.last-release.outputs.tag }}
           last_release_url:  ${{ steps.last-release.outputs.url }}
-          commit_count:      ${{ steps.gitlog.outputs.count }}
-          commits_json:      ${{ steps.gitlog.outputs.commits_json }}
+          insertions:        ${{ steps.gitlog.outputs.insertions }}
+          deletions:         ${{ steps.gitlog.outputs.deletions }}
+          files_json:        ${{ steps.gitlog.outputs.files_json }}
           compare_url:       ${{ steps.gitlog.outputs.compare_url }}
           e2e_image:         ${{ inputs.e2e_image }}
           auto_merge:        ${{ inputs.auto_merge }}
