@@ -36,7 +36,7 @@ rules:
       - reusable-execute-release.yml:142
       - reusable-execute-release.yml:213
       - reusable-release-gate.yml:114
-      - reusable-release.yml:381
+      - reusable-release.yml:418
       - reusable-vulnerability-scan.yml:80
       - reusable-vulnerability-scan.yml:88
       - reusable-vulnerability-scan.yml:94
