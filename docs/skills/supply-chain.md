@@ -352,8 +352,8 @@ in images remains not putting them there (`detect-private-key` pre-commit hook +
 
 ## Pattern: Syft SBOM generation for large images
 
-Generating SBOMs inline with Syft on large bootc images (5+ GB) hits three failure modes.
-All three mitigations are live in `reusable-release.yml` (`generate_sbom_inline: true` path).
+Generating SBOMs inline with Syft on large bootc images (5+ GB) hits four failure modes.
+All mitigations are live in `reusable-release.yml` (`generate_sbom_inline: true` path).
 
 **Disk-full:** Syft's default pull downloads the full image to disk before scanning.
 Use the `registry:` prefix to scan in-registry without pulling:
@@ -381,6 +381,14 @@ if ! timeout 300 syft registry:... --catalogers rpm -o spdx-json=sbom.spdx.json 
   echo '::warning::Syft timed out — stub SBOM used'
 fi
 ```
+
+**Runner VM shutdown on catastrophic exhaustion:** Step-level `continue-on-error` and
+timeouts do not survive when GitHub Actions terminates the runner VM outright (`##[error]The
+runner has received a shutdown signal`), dropping all subsequent steps in that job. Isolate
+inline Syft in its own `inline-sbom` job (`continue-on-error: true`, 20-minute timeout,
+`contents: read`) uploading an artifact. The downstream `image-release` job downloads the
+artifact with `continue-on-error: true` and falls back to a minimal valid SPDX document on
+download failure, guaranteeing release creation survives runner loss (#681).
 
 **GitHub Attestations 16MB limit:** GitHub's attestation API (`actions/attest`) rejects any
 predicate or SBOM file exceeding 16MB (16,777,216 bytes). In bootc desktop images with ~1,800+
@@ -412,6 +420,7 @@ Additions require a security review issue in `projectbluefin/common` before prov
 | `BLUEFINBOT_APP_ID` + `BLUEFINBOT_PRIVATE_KEY` | GitHub App | bluefin, bluefin-lts |
 | `CASD_CLIENT_KEY` | TLS client cert for BST CAS | dakota |
 | `SIGNING_SECRET` | Legacy cosign private key | common (pending keyless migration) |
+| `DISCORD_RELEASES_WEBHOOK` | Discord webhook URL for `#releases` forum notifications | Callers of `reusable-execute-release.yml` (optional; notification is skipped when unset) |
 
 Policy doc: [projectbluefin/common/docs/secrets-policy.md](https://github.com/projectbluefin/common/blob/main/docs/secrets-policy.md)
 
