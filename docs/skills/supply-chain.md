@@ -420,6 +420,7 @@ Additions require a security review issue in `projectbluefin/common` before prov
 | `BLUEFINBOT_APP_ID` + `BLUEFINBOT_PRIVATE_KEY` | GitHub App | bluefin, bluefin-lts |
 | `CASD_CLIENT_KEY` | TLS client cert for BST CAS | dakota |
 | `SIGNING_SECRET` | Legacy cosign private key | common (pending keyless migration) |
+| `DISCORD_RELEASES_WEBHOOK` | Discord webhook URL for `#releases` forum notifications | Callers of `reusable-execute-release.yml` (optional; notification is skipped when unset) |
 
 Policy doc: [projectbluefin/common/docs/secrets-policy.md](https://github.com/projectbluefin/common/blob/main/docs/secrets-policy.md)
 
