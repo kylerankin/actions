@@ -52,7 +52,7 @@ EOF
 
   # Extract the `for attempt in 1 2 3; do ... done` block verbatim from the
   # action so the test runs exactly what ships.
-  CHUNKAH_PULL_LOOP="$(awk '/for attempt in 1 2 3; do/{f=1} f{print} f&&/^ *done$/{exit}' bootc-build/chunka/action.yml)"
+  CHUNKAH_PULL_LOOP="$(awk '/for attempt in 1 2 3; do/{f=1} f{print} f&&/^ *done$/{exit}' "${BATS_TEST_DIRNAME}/../../bootc-build/chunka/action.yml")"
 }
 
 teardown() {
