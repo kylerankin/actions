@@ -72,5 +72,8 @@ jobs:
           persist-credentials: false
 
       - name: Run the pinned-fetches gate
+        env:
+          MODE: ${{ inputs.mode }}
+          ALLOWLIST: ${{ inputs.allowlist }}
         run: |
-          ./pinned-fetches-gate/scripts/check-pinned-fetches.sh --root . --mode "${{ inputs.mode }}" --allowlist "${{ inputs.allowlist }}"
+          ./pinned-fetches-gate/scripts/check-pinned-fetches.sh --root . --mode "${MODE}" --allowlist "${ALLOWLIST}"
