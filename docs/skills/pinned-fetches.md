@@ -141,11 +141,12 @@ jobs:
     with:
       mode: fail            # warn for the baseline cycle, then fail
       allowlist: .github/pinned-fetches-allowlist.txt
-      actions_ref: v1       # where the gate script is fetched from (default)
+      actions_ref:          # empty selects the reusable's own pinned commit
 ```
 
 The reusable does two checkouts: the code under scan (the consumer's own repo),
-then `projectbluefin/actions` at `actions_ref` (default `v1`) to take
+then `projectbluefin/actions` at `actions_ref` (empty selects the reusable's
+own pinned commit) to take
 `scripts/check-pinned-fetches.sh`. Keeping the gate in one shared place means
 fixing a rule here fixes it for every consumer, instead of one copy per repo.
 

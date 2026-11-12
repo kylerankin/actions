@@ -64,10 +64,10 @@ jobs:
 
 The reusable sources the validator via explicit `workflow_call` inputs
 (`actions_repository`, `actions_ref`), defaulting to `projectbluefin/actions`
-at `v1`, instead of a value baked into the checkout step. A consumer that
-later pins a `@v2` of this reusable inherits that version's own defaults;
-nothing here silently drifts to whatever `@v1` happens to point at
-independently of the ref the consumer actually invoked. Every consumer
+at '' (empty selects this reusable's own pinned commit), instead of a value
+baked into the checkout step. Nothing here silently drifts to whatever the
+pinned ref happens to point at independently of the ref the consumer actually
+invoked. Every consumer
 enforces the identical rule from one source of truth. A caller workflow that
 exceeds the 50-line threshold now fails a check before it reaches that
 consumer's `main`/`testing` branch, instead of waiting for the weekly
