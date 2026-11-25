@@ -5,12 +5,12 @@ render_pr_body.py — Generate the promotion PR body for a promotion PR.
 The promoted branch pair is a parameter (``--source-branch``/``--target-branch``):
 testing → main for the bluefin family, main → stable for finpilot.
 
-Called by both reusable-promote-squash.yml (squash/git workflow) and
-reusable-promote.yml (digest workflow).  The body contains HTML marker
+Called by reusable-promote-squash.yml. The body contains HTML marker
 comments around the gate section so the gate job can do a targeted
 replacement without touching the rest of the body.
 
-Usage (squash workflow — has git log, no digests yet):
+Usage (squash workflow — describes the actual tree difference of the
+promotion branch against the target branch):
     python3 render_pr_body.py \\
         --project-name        "Bluefin" \\
         --primary-image       "bluefin" \\
@@ -21,9 +21,10 @@ Usage (squash workflow — has git log, no digests yet):
         --days-since-stable   12 \\
         --last-release-tag    "stable-20260530-abc1234" \\
         --last-release-url    "https://github.com/.../releases/tag/stable-20260530-abc1234" \\
-        --commit-count        54 \\
-        --commits-json        '[{"sha":"abc1234def5","subject":"feat: stuff"}]' \\
-        --compare-url         "https://github.com/.../compare/main...testing" \\
+        --insertions          3 \\
+        --deletions           2 \\
+        --files-json          '["configs/a.toml","configs/b.toml"]' \\
+        --compare-url         "https://github.com/.../compare/main...auto/promote-testing-to-main" \\
         --output              /tmp/pr-body.md
 
 Usage (digest workflow — variants include resolved digests, no git log):
@@ -124,14 +125,18 @@ def _section_variants(variants: list[dict], source_tag: str) -> str:
     return "### Variants being promoted\n\n" + header + "\n".join(rows) + "\n"
 
 
-def _section_commits(
-    count: int,
-    commits: list[dict],
+def _section_changes(
+    files: list[str],
+    insertions: int,
+    deletions: int,
     compare_url: str | None,
     source_branch: str = "testing",
     target_branch: str = "stable",
 ) -> str:
-    if count == 0 and not commits:
+    # Empty diff: nothing to promote. The squash branch is only built when the
+    # trees differ, so this is the no-op case (e.g. a digest-only caller that
+    # supplies no file list).
+    if not files and insertions == 0 and deletions == 0:
         return ""
 
     compare_link = (
@@ -139,24 +144,20 @@ def _section_commits(
         if compare_url
         else ""
     )
-    noun = "commit" if count == 1 else "commits"
-    intro = f"**{count} {noun}** ahead of {target_branch}{compare_link}\n"
+    file_noun = "file" if len(files) == 1 else "files"
+    intro = (
+        f"**{len(files)} {file_noun} changed**, "
+        f"+{insertions} −{deletions} ahead of {target_branch}{compare_link}\n"
+    )
 
-    if not commits:
+    if not files:
         return "### Changes since last stable\n\n" + intro
 
-    rows = "\n".join(
-        # Escape pipe characters that would break the markdown table
-        f"| `{c['sha'][:7]}` | {c['subject'].replace('|', chr(92) + '|')} |"
-        for c in commits
-    )
+    rows = "\n".join(f"- `{f}`" for f in files)
     details = (
         "<details>\n"
-        f"<summary>Recent commits (showing last {len(commits)})</summary>\n\n"
-        "| SHA | Subject |\n"
-        "|---|---|\n"
-        f"{rows}\n\n"
-        "</details>"
+        f"<summary>Changed files (showing last {len(files)})</summary>\n\n"
+        f"{rows}\n\n</details>"
     )
     return "### Changes since last stable\n\n" + intro + "\n" + details + "\n"
 
@@ -203,12 +204,14 @@ def main() -> None:
                     help="Tag of last stable release")
     ap.add_argument("--last-release-url",   default="",
                     help="HTML URL of last stable release")
-    ap.add_argument("--commit-count",       type=int, default=0,
-                    help="Number of commits testing is ahead of main/stable")
-    ap.add_argument("--commits-json",       default="[]",
-                    help="JSON array of {sha, subject} objects (recent commits)")
+    ap.add_argument("--insertions",       type=int, default=0,
+                    help="Insertions in the promotion diff against the target branch")
+    ap.add_argument("--deletions",        type=int, default=0,
+                    help="Deletions in the promotion diff against the target branch")
+    ap.add_argument("--files-json",       default="[]",
+                    help="JSON array of changed file paths (relative to repo root)")
     ap.add_argument("--compare-url",        default="",
-                    help="GitHub compare URL: .../compare/main...testing")
+                    help="GitHub compare URL: .../compare/target...promotion")
     ap.add_argument("--source-tag",         default="testing",
                     help="Source tag being promoted (default: testing)")
     ap.add_argument("--source-branch",      default="testing",
@@ -221,7 +224,7 @@ def main() -> None:
     args = ap.parse_args()
 
     variants = json.loads(args.variants_json)
-    commits  = json.loads(args.commits_json)
+    files    = json.loads(args.files_json)
 
     sections = [
         _section_header(
@@ -238,8 +241,8 @@ def main() -> None:
         "",
         _section_variants(variants, args.source_tag),
         "",
-        _section_commits(
-            args.commit_count, commits, args.compare_url or None,
+        _section_changes(
+            files, args.insertions, args.deletions, args.compare_url or None,
             source_branch=args.source_branch,
             target_branch=args.target_branch,
         ),
