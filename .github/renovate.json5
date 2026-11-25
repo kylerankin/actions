@@ -6,6 +6,23 @@
 
   "baseBranchPatterns": ["main"],
 
+  // Track the Renovate config-validator image pinned by digest in
+  // reusable-validate-renovate.yml so its version and digest stay current.
+  // No built-in manager parses `docker run` lines inside a workflow run: block,
+  // so a custom regex manager is required. It reads the image reference from the
+  // workflow file and feeds it to the docker datasource.
+  "customManagers": [
+    {
+      "managerFilePatterns": ["/^\\.github/workflows/reusable-validate-renovate\\.yml$/"],
+      "matchStrings": [
+        "(?<depName>ghcr\\.io/renovatebot/renovate)(?::(?<currentValue>[^\\s@#\"']+))?(?<currentDigest>@sha256:[a-f0-9]+)?"
+      ],
+      "customType": "regex",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "semver"
+    }
+  ],
+
   // Do not rebase when the default branch is updated
   "rebaseWhen": "never",
 

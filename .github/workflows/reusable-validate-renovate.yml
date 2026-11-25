@@ -1,6 +1,11 @@
 name: reusable-validate-renovate
 # Validates a renovate.json5 config file in the caller's repository.
 # Callers: actions, bluefin, bluefin-lts, dakota
+#
+# The validator runs inside the official Renovate container image pinned by its
+# multi-arch manifest-index digest, so the whole dependency tree is checked
+# against exact reviewed bytes instead of a mutable package name and version.
+# See projectbluefin/actions#738 (OpenSSF Scorecard Pinned-Dependencies).
 
 on:
   workflow_call:
@@ -19,13 +24,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Setup Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        with:
-          node-version: '24'
-
-      - name: Install renovate
-        run: npm install -g renovate@44.14.12
-
+      # Run the validator from the official Renovate image, pinned by its
+      # manifest-index (multi-arch) digest. This locks every transitive
+      # dependency to exact reviewed bytes with no large lockfile in this repo,
+      # and the versioned tag lets Renovate keep the digest current. The caller's
+      # workspace is mounted so the validator checks the caller's config file.
       - name: Validate Renovate config
-        run: renovate-config-validator --strict
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/usr/src/app" \
+            -w /usr/src/app \
+            --entrypoint renovate-config-validator \
+            ghcr.io/renovatebot/renovate:44.14.12@sha256:160125831b82ae05c734870b9f65094e0f8699a0e44f3274bacc7b36a9041047 \
+            --strict
